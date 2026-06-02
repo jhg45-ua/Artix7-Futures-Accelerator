@@ -1,0 +1,35 @@
+# ========================================
+# SOFTWARE (C++ / CMake)
+# ========================================
+# Ignorar todo el contenido de build, EXCEPTO el .gitkeep
+software/build/*
+!software/build/.gitkeep
+
+# Artefactos de compilación genéricos (por si compilas fuera de build)
+*.o
+*.out
+*.a
+*.so
+
+# ========================================
+# HARDWARE (Vivado / Xilinx)
+# ========================================
+# Ignorar todo el contenido del workspace, EXCEPTO el .gitkeep
+hardware/workspace/*
+!hardware/workspace/.gitkeep
+
+# Temporales, logs y basura de Vivado (por si se escapan del workspace)
+*.jou
+*.log
+*.str
+*.pb
+*.wdb
+*.wcfg
+.Xil/
+
+# ========================================
+# SISTEMA OPERATIVO Y ENTORNOS (IDEs)
+# ========================================
+.DS_Store
+.vscode/
+.idea/
