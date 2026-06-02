@@ -38,12 +38,19 @@ void IbkrClient::processMessages() {
 void IbkrClient::tickPrice(int tickerId, TickType field, double price, const TickAttrib& attrib) {
     // Aquí recibimos el Tick de Micro Futuros.
     // field == 1 (Bid), field == 2 (Ask).
+    // Indicamos explícitamente al compilador que ignoramos estos parámetros de la interfaz por ahora
+    (void)tickerId;
+    (void)attrib;
     
     if (field == 1 || field == 2) {
         FpgaTickPacket packet;
         packet.sync_magic = 0x54;
         packet.order_type = (field == 1) ? 'B' : 'A';
         packet.price = price;
+
+        // Forzamos el uso de la variable (temporalmente) para silenciar el warning
+        // hasta que tengamos el descriptor del UART listo para el write()
+        (void)packet;
 
         // TODO: Hacer write() del packet crudo hacia /dev/ttyUSBX
         // std::cout << "Enviando a FPGA -> Tipo: " << packet.order_type << " Precio: " << price << "\n";
