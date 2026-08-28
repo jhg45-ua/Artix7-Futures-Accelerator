@@ -2,12 +2,16 @@
 #include "protocol.h"
 #include <iostream>
 
-IbkrClient::IbkrClient() : m_osSignal(2000) { // Timeout de 2000ms para la señal
+IbkrClient::IbkrClient(UartInterface* uart) : m_osSignal(2000), m_uart(uart) { // Timeout de 2000ms para la señal
     m_client = std::unique_ptr<EClientSocket>(new EClientSocket(this, &m_osSignal));
 }
 
 IbkrClient::~IbkrClient() {
-    if (m_client->isConnected()) {
+    disconnect();
+}
+
+void IbkrClient::disconnect() {
+    if (m_client && m_client->isConnected()) {
         m_client->eDisconnect();
     }
 }
@@ -42,17 +46,18 @@ void IbkrClient::tickPrice(int tickerId, TickType field, double price, const Tic
     (void)tickerId;
     (void)attrib;
     
-    if (field == 1 || field == 2) {
+    if (field == 1 || field == 2 || field == 66 || field == 67) {
         FpgaTickPacket packet;
         packet.sync_magic = 0x54;
         packet.order_type = (field == 1) ? 'B' : 'A';
         packet.price = price;
 
-        // Forzamos el uso de la variable (temporalmente) para silenciar el warning
-        // hasta que tengamos el descriptor del UART listo para el write()
-        (void)packet;
+        if (m_uart && m_uart->isOpen()) {
+            m_uart->sendPacket(packet);
+        }
 
-        // TODO: Hacer write() del packet crudo hacia /dev/ttyUSBX
-        // std::cout << "Enviando a FPGA -> Tipo: " << packet.order_type << " Precio: " << price << "\n";
+        // Salida ligera para monitorización
+        std::cout << "[TICK -> FPGA] Tipo: " << packet.order_type 
+                  << " | Precio: " << packet.price << std::endl;
     }
 }

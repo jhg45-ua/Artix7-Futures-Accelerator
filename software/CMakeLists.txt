@@ -20,6 +20,7 @@ include_directories(/usr/local/include/twsapi)
 set(SOURCES
     src/main.cpp
     src/ibkr_client.cpp
+    src/uart_interface.cpp
 )
 
 add_executable(hft_client ${SOURCES})
