@@ -42,27 +42,46 @@ int main(int argc, char **argv) {
         // client.client()->reqMktData(1002, contractFollower, "", false, false,
         // TagValueListSPtr());
 
-        // 1. Generar contrato con ContractFactory
-        Contract target = ContractFactory::makeMicroFuture("MES", "202609");
-        std::cout << "[*] Consultando especificaciones de: "
+        // 1. Instanciar contrato con ContractFactory (Ej: MES o BTC)
+        Contract target = ContractFactory::makeMicroFuture("MS", "202609");
+        std::cout << "[*] Verificando especificaciones de: "
                   << ContractFactory::dumpContract(target) << std::endl;
 
-        // 2. Validación síncrona determinista
+        // 2. Validación síncrona determinista del contrato
         if (!client.validateContract(2001, target, 3000)) {
-            std::cerr
-                << "[-] VALIDACIÓN FALLIDA: El contrato no existe o el broker lo ha rechazado."
-                << std::endl;
-            std::cerr << "[-] Pipeline cancelado. No se solicitarán datos de mercado ni se "
-                         "emitirán paquetes a la FPGA."
-                      << std::endl;
+            std::cerr << "[-] VALIDACIÓN FALLIDA: Contrato rechazado por el broker." << std::endl;
+            std::cerr << "[-] Cancelando pipeline." << std::endl;
+            client.disconnect();
             return 1;
         }
 
-        // 3. Suscribir a flujo de datos (3 = Delayed gratuito)
-        client.client()->reqMarketDataType(3);
+        // 3. Verificación de Horario de Negociación
+        bool tradingOpen = client.isMarketOpen(false); // Sesión completa (Globex / ETH)
+        bool liquidOpen = client.isMarketOpen(true);   // Sesión regular de alta liquidez (RTH)
+
+        std::cout << "[*] Estado de Sesión en Exchange (" << client.getContractDetails().timeZoneId
+                  << "):" << std::endl;
+        std::cout << "    - Negociación Electrónica (Trading Hours): "
+                  << (tradingOpen ? "ABIERTO [OK]" : "CERRADO [!]") << std::endl;
+        std::cout << "    - Sesión Líquida Regular (Liquid Hours):   "
+                  << (liquidOpen ? "ABIERTO [OK]" : "CERRADO [!]") << std::endl;
+
+        // Bloqueo y salida si la sesión de negociación está inactiva
+        if (!tradingOpen) {
+            std::cerr
+                << "\n[-] MERCADO CERRADO: La sesión de trading para este activo no está activa."
+                << std::endl;
+            std::cerr << "[-] No se enviarán datos ni órdenes a la FPGA. Cancelando ejecución."
+                      << std::endl;
+            client.disconnect();
+            return 1;
+        }
+
+        // 4. Suscribir a datos de mercado
+        client.client()->reqMarketDataType(3); // 3 = Delayed, 1 = Real-Time
         client.client()->reqMktData(1001, target, "", false, false, TagValueListSPtr());
 
-        std::cout << "[+] Pipeline activo y blindado. Esperando cotizaciones...\n" << std::endl;
+        std::cout << "[+] Pipeline operativo. Escuchando cotizaciones...\n" << std::endl;
 
         // Mantener el hilo principal vivo (simulación)
         while (true) {

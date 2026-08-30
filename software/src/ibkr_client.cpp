@@ -2,11 +2,17 @@
 #include "Contract.h"
 #include "protocol.h"
 #include <chrono>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
 #include <iostream>
 #include <mutex>
+#include <sstream>
+#include <string>
 
 IbkrClient::IbkrClient(UartInterface *uart)
-    : m_osSignal(2000), m_uart(uart) { // Timeout de 2000ms para la señal
+    : m_osSignal(2000), m_running(false), m_uart(uart), m_valDone(false),
+      m_activeValidationReqId(-1), m_contractValid(false) {
     m_client = std::unique_ptr<EClientSocket>(new EClientSocket(this, &m_osSignal));
 }
 
@@ -14,25 +20,33 @@ IbkrClient::~IbkrClient() {
     disconnect();
 }
 
-void IbkrClient::disconnect() {
-    if (m_client && m_client->isConnected()) {
-        m_client->eDisconnect();
-    }
-}
-
 bool IbkrClient::connect(const char *host, int port, int clientId) {
     bool connected = m_client->eConnect(host, port, clientId, false);
 
     if (connected) {
+        m_running = true;
         // Inicializamos el lector secundario
         m_reader = std::unique_ptr<EReader>(new EReader(m_client.get(), &m_osSignal));
         m_reader->start();
 
         // Lanzamos el hilo secundario que esperará en el socket crudo de IBKR
         m_readerThread = std::thread(&IbkrClient::processMessages, this);
-        m_readerThread.detach();
+        // No hacemos detach() para evitar hilos huerfanos
+        // m_readerThread.detach();
     }
     return connected;
+}
+
+void IbkrClient::disconnect() {
+    if (m_running.exchange(false)) {
+        if (m_client && m_client->isConnected()) {
+            m_client->eDisconnect();
+        }
+        m_osSignal.issueSignal();
+        if (m_readerThread.joinable()) {
+            m_readerThread.join();
+        }
+    }
 }
 
 void IbkrClient::processMessages() {
@@ -63,6 +77,72 @@ bool IbkrClient::validateContract(int reqId, const Contract &contract, int timeo
     }
 
     return m_contractValid.load();
+}
+
+std::string IbkrClient::getCurrentTimeTz(const std::string &tzId) const {
+    time_t now = time(nullptr);
+    char oldTz[128] = {0};
+    char *tzEnv = getenv("TZ");
+    if (tzEnv)
+        strncpy(oldTz, tzEnv, sizeof(oldTz) - 1);
+
+    if (!tzId.empty()) {
+        setenv("TZ", tzId.c_str(), 1);
+    }
+    tzset();
+
+    struct tm tmInfo;
+    localtime_r(&now, &tmInfo);
+
+    if (tzEnv) {
+        setenv("TZ", oldTz, 1);
+    } else {
+        unsetenv("TZ");
+    }
+    tzset();
+
+    char buf[12];
+    strftime(buf, sizeof(buf), "%Y%m%d:%H%M", &tmInfo);
+    return std::string(buf);
+}
+
+bool IbkrClient::isSessionActive(const std::string &hoursStr, const std::string &tzId) const {
+    if (hoursStr.empty())
+        return true;
+
+    std::string nowStr = getCurrentTimeTz(tzId);
+    std::stringstream ss(hoursStr);
+    std::string token;
+
+    while (std::getline(ss, token, ';')) {
+        if (token.empty())
+            continue;
+
+        if (token.find("CLOSED") != std::string::npos) {
+            continue;
+        }
+
+        size_t dash = token.find('-');
+        if (dash != std::string::npos) {
+            std::string startStr = token.substr(0, dash);
+            std::string endStr = token.substr(dash + 1);
+
+            // Comparación lexicográfica directa formato ISO YYYYMMDD:HHMM
+            if (nowStr >= startStr && nowStr < endStr) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+bool IbkrClient::isMarketOpen(bool checkLiquidOnly) const {
+    if (!m_contractValid.load())
+        return false;
+
+    const std::string &schedule =
+        checkLiquidOnly ? m_activeDetails.liquidHours : m_activeDetails.tradingHours;
+    return isSessionActive(schedule, m_activeDetails.timeZoneId);
 }
 
 void IbkrClient::tickPrice(int tickerId, TickType field, double price, const TickAttrib &attrib) {

@@ -23,7 +23,9 @@ class IbkrClient : public DefaultEWrapper {
     EClientSocket *client() { return m_client.get(); }
 
     bool validateContract(int reqId, const Contract &contract, int timeoutMs = 3000);
+    bool isMarketOpen(bool checkLiquidOnly = false) const;
     bool isContractValid() const { return m_contractValid.load(); };
+    const ContractDetails &getContractDetails() const { return m_activeDetails; }
 
     using DefaultEWrapper::error;
 
@@ -40,11 +42,14 @@ class IbkrClient : public DefaultEWrapper {
 
   private:
     void processMessages();
+    bool isSessionActive(const std::string &hoursStr, const std::string &tzId) const;
+    std::string getCurrentTimeTz(const std::string &tzId) const;
 
     EReaderOSSignal m_osSignal;
     std::unique_ptr<EClientSocket> m_client;
     std::unique_ptr<EReader> m_reader;
     std::thread m_readerThread;
+    std::atomic<bool> m_running;
 
     UartInterface *m_uart;
 
