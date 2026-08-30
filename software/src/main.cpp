@@ -1,3 +1,5 @@
+#include "Contract.h"
+#include "cli_parser.h"
 #include "contract_factory.h"
 #include "ibkr_client.h"
 #include <chrono>
@@ -5,13 +7,24 @@
 #include <thread>
 
 int main(int argc, char **argv) {
-    std::string uartPort = (argc > 1) ? argv[1] : "/dev/ttyUSB1";
+    CliConfig config = CliParser::parse(argc, argv);
+
+    if (config.helpRequested) {
+        CliParser::printUsage(argv[0]);
+        return 0;
+    }
+
+    if (!config.valid) {
+        CliParser::printUsage(argv[0]);
+        return 1;
+    }
+
     std::cout << "Iniciando Artix7-Futures-Accelerator Host Engine..." << std::endl;
 
     UartInterface uart;
     // Intenta abrir el puerto serie; si la placa no está conectada, continúa en
     // modo visualización
-    if (!uart.openPort(uartPort)) {
+    if (!uart.openPort(config.port)) {
         std::cout << "[!] Ejecutando en modo SIMULACIÓN (sin FPGA conectada)." << std::endl;
     }
 
@@ -23,31 +36,12 @@ int main(int argc, char **argv) {
         // Esperar estabilización del socket
         std::this_thread::sleep_for(std::chrono::milliseconds(300));
 
-        // // Solicitar datos retrasados gratuitos (3) si no hay subscripcion live, o
-        // // (1) para live
-        // client.client()->reqMarketDataType(3);
-
-        // // Generar contratos mediante la clase ContractFactory
-        // Contract contractLeader = ContractFactory::makeCrypto("BTC");
-        // Contract contractFollower = ContractFactory::makeCrypto("ETH");
-
-        // std::cout << "[+] Contrato Lider: " << ContractFactory::dumbContract(contractLeader)
-        //           << std::endl;
-        // std::cout << "[+] Contrato Seguidor: " << ContractFactory::dumbContract(contractFollower)
-        //           << std::endl;
-
-        // // Suscribir a datos de mercado con IDs unívocos (ej. 1001 y 1002)
-        // std::cout << "[+] Suscribiendo a flujos de mercado..." << std::endl;
-        // client.client()->reqMktData(1001, contractLeader, "", false, false, TagValueListSPtr());
-        // client.client()->reqMktData(1002, contractFollower, "", false, false,
-        // TagValueListSPtr());
-
-        // 1. Instanciar contrato con ContractFactory (Ej: MES o BTC)
-        Contract target = ContractFactory::makeMicroFuture("MES", "202609");
+        // Instanciar contrato con ContractFactory (Ej: MES o BTC)
+        Contract target = ContractFactory::makeMicroFuture(config.symbol, config.expiry);
         std::cout << "[*] Verificando especificaciones de: "
                   << ContractFactory::dumpContract(target) << std::endl;
 
-        // 2. Validación síncrona determinista del contrato
+        // Validación síncrona determinista del contrato
         if (!client.validateContract(2001, target, 3000)) {
             std::cerr << "[-] VALIDACIÓN FALLIDA: Contrato rechazado por el broker." << std::endl;
             std::cerr << "[-] Cancelando pipeline." << std::endl;
@@ -55,7 +49,7 @@ int main(int argc, char **argv) {
             return 1;
         }
 
-        // 3. Verificación de Horario de Negociación
+        // Verificación de Horario de Negociación
         bool tradingOpen = client.isMarketOpen(false); // Sesión completa (Globex / ETH)
         bool liquidOpen = client.isMarketOpen(true);   // Sesión regular de alta liquidez (RTH)
 
@@ -77,7 +71,7 @@ int main(int argc, char **argv) {
             return 1;
         }
 
-        // 4. Suscribir a datos de mercado
+        // Suscribir a datos de mercado
         client.client()->reqMarketDataType(3); // 3 = Delayed, 1 = Real-Time
         client.client()->reqMktData(1001, target, "", false, false, TagValueListSPtr());
 
