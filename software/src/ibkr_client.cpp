@@ -189,29 +189,27 @@ bool IbkrClient::isMarketOpen(bool checkLiquidOnly) const {
 }
 
 void IbkrClient::tickPrice(int tickerId, TickType field, double price, const TickAttrib &attrib) {
-    // Aquí recibimos el Tick del precio.
-    // Indicamos explícitamente al compilador que ignoramos estos parámetros de la interfaz por
-    // ahora
     (void)tickerId;
     (void)attrib;
 
-    if (!m_contractValid.load(std::memory_order_relaxed) || price <= 0.0) {
+    if (!m_contractValid.load(std::memory_order_relaxed)) {
         return;
     }
 
-    // 1 = Bid, 2 = Ask (Live) | 66 = Delayed Bid, 67 = Delayed Ask
+    // Filtro estricto: Descartar LAST (4/68), CLOSE (9/75) o cualquier dato que no sea BBO
     if (field == 1 || field == 2 || field == 66 || field == 67) {
         char side = (field == 1 || field == 66) ? 'B' : 'A';
         FpgaTickPacket packet;
 
-        // El filtro descarta cotizaciones <= 0 y spreads invertidos (Bid >= Ask)
+        // El libro de órdenes valida Ask > Bid antes de encolar
         if (m_orderBook.processTick(side, price, packet)) {
             m_spscQueue.push(packet);
-        }
 
-        // Salida ligera para monitorización
-        std::cout << "[TICK -> FPGA] Tipo: " << packet.order_type << " | Precio: " << packet.price
-                  << std::endl;
+            // Log de monitorización limpio
+            std::cout << "[TICK -> FPGA] Tipo: " << packet.order_type
+                      << " | Precio: " << packet.price << " | Field ID: " << static_cast<int>(field)
+                      << std::endl;
+        }
     }
 }
 
