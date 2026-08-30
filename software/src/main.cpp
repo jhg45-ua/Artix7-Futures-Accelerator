@@ -24,15 +24,16 @@ int main(int argc, char **argv) {
     UartInterface uart;
     // Intenta abrir el puerto serie; si la placa no está conectada, continúa en
     // modo visualización
-    if (!uart.openPort(config.port)) {
+    if (!uart.openPort(config.uartPort)) {
         std::cout << "[!] Ejecutando en modo SIMULACIÓN (sin FPGA conectada)." << std::endl;
     }
 
     IbkrClient client(&uart);
 
-    // Conexión a IB Gateway (Headless) en localhost, puerto 4002. Client ID 1.
-    if (client.connect("127.0.0.1", 7497, 1)) {
-        std::cout << "Conectado exitosamente al IB Gateway." << std::endl;
+    // Conexión a IB Gateway (Headless) en localhost, puerto y ClientId definidos por CLI
+    if (client.connect("127.0.0.1", config.ibPort, config.clientId)) {
+        std::cout << "Conectado exitosamente al IBKR (127.0.0.1:" << config.ibPort << ")."
+                  << std::endl;
         // Esperar estabilización del socket
         std::this_thread::sleep_for(std::chrono::milliseconds(300));
 

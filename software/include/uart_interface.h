@@ -2,16 +2,24 @@
 #include "protocol.h"
 #include <string>
 
+// Clase que define la interfaz de comunicacion serial entre el PC y la FPGA por medio de UART
 class UartInterface {
-public:
+  public:
+    // Constructor
     UartInterface();
+    // Destructor
     ~UartInterface();
 
-    bool openPort(const std::string& portName, int baudRate = 115200);
+    // Método para abrir el puerto serial
+    bool openPort(const std::string &portName, int baudRate = 115200);
+    // Método para cerrar el puerto serial
     void closePort();
-    bool sendPacket(const FpgaTickPacket& packet);
+    // Método para enviar un paquete a la FPGA
+    bool sendPacket(const FpgaTickPacket &packet);
+    // Método para verificar si el puerto serial está abierto
     bool isOpen() const { return m_fd != -1; }
 
-private:
-    int m_fd;   
+  private:
+    // Descriptor de archivo del puerto serial
+    int m_fd;
 };
