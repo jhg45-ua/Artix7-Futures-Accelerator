@@ -49,6 +49,10 @@ void IbkrClient::tickPrice(int tickerId, TickType field, double price, const Tic
     (void)tickerId;
     (void)attrib;
 
+    if (price <= 0.0) {
+        return;
+    }
+
     if (field == 1 || field == 2 || field == 66 || field == 67) {
         FpgaTickPacket packet;
         packet.sync_magic = 0x54;
@@ -81,22 +85,20 @@ void IbkrClient::contractDetailsEnd(int reqId) {
     std::cout << "[+] Verificación de especificaciones de mercado completada.\n" << std::endl;
 }
 
-void IbkrClient::error(int id, int errorCode, const std::string &errorString,
+void IbkrClient::error(int id, long long errorTimeMs, int errorCode,
+                       const std::string &errorString,
                        const std::string &advancedOrderRejectJson) {
+    (void)errorTimeMs;
     (void)advancedOrderRejectJson;
-    error(id, errorCode, errorString);
-}
-
-void IbkrClient::error(int id, int errorCode, const std::string &errorString) {
-    (void)id;
 
     switch (errorCode) {
     case 200:
-        std::cerr << "[-] ERROR [200]: Contrato no reconocido o parámetros inválidos ("
-                  << errorString << ")" << std::endl;
+        std::cout << "[-] ERROR [200] (reqId=" << id
+                  << "): Contrato no reconocido o parámetros inválidos (" << errorString << ")"
+                  << std::endl;
         break;
     case 354:
-        std::cerr << "[-] AVISO [354]: Sin suscripción de tiempo real activa. Cambie a Delayed "
+        std::cout << "[-] AVISO [354]: Sin suscripción de tiempo real activa. Cambie a Delayed "
                      "(reqMarketDataType 3)."
                   << std::endl;
         break;
@@ -119,7 +121,7 @@ void IbkrClient::error(int id, int errorCode, const std::string &errorString) {
             std::cout << "[i] Notificación IBKR [" << errorCode << "]: " << errorString
                       << std::endl;
         } else {
-            std::cerr << "[-] Error API [" << errorCode << "]: " << errorString << std::endl;
+            std::cout << "[-] Error API [" << errorCode << "]: " << errorString << std::endl;
         }
         break;
     }

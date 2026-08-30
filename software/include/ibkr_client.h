@@ -29,10 +29,9 @@ class IbkrClient : public DefaultEWrapper {
     void contractDetailsEnd(int reqId) override;
 
     // Callback de gestion de errores
-    void error(int id, int errorCode, const std::string &errorString,
+    void error(int id, long long errorTimeMs, int errorCode,
+               const std::string &errorString,
                const std::string &advancedOrderRejectJson) override;
-    void error(int id, int errorCode, const std::string &errorString) override;
-    void error(const std::string &errorString) override;
 
   private:
     void processMessages();

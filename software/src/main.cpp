@@ -1,4 +1,3 @@
-#include "Contract.h"
 #include "contract_factory.h"
 #include "ibkr_client.h"
 #include <chrono>
