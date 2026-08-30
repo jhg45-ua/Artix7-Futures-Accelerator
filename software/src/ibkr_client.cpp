@@ -79,40 +79,55 @@ bool IbkrClient::validateContract(int reqId, const Contract &contract, int timeo
     return m_contractValid.load();
 }
 
-std::string IbkrClient::getCurrentTimeTz(const std::string &tzId) const {
+// -------------------------------------------------------------
+// Control y Verificación de Horario de Mercado
+// -------------------------------------------------------------
+std::string IbkrClient::getCurrentTimeInTz(const std::string &tzId) const {
     time_t now = time(nullptr);
-    char oldTz[128] = {0};
-    char *tzEnv = getenv("TZ");
-    if (tzEnv)
-        strncpy(oldTz, tzEnv, sizeof(oldTz) - 1);
 
-    if (!tzId.empty()) {
-        setenv("TZ", tzId.c_str(), 1);
+    // Normalización de identificadores de timezone de IBKR para glibc/Linux
+    std::string zoneName = tzId;
+    if (zoneName == "US/Central" || zoneName == "CST") {
+        zoneName = "America/Chicago";
+    } else if (zoneName == "US/Eastern" || zoneName == "EST") {
+        zoneName = "America/New_York";
+    } else if (zoneName == "US/Pacific" || zoneName == "PST") {
+        zoneName = "America/Los_Angeles";
     }
+
+    // El prefijo ':' obliga a glibc a buscar el archivo exacto en /usr/share/zoneinfo/
+    std::string tzRule = ":" + zoneName;
+
+    char *prevTz = getenv("TZ");
+    std::string oldTz = prevTz ? prevTz : "";
+
+    setenv("TZ", tzRule.c_str(), 1);
     tzset();
 
     struct tm tmInfo;
     localtime_r(&now, &tmInfo);
 
-    if (tzEnv) {
-        setenv("TZ", oldTz, 1);
+    if (!oldTz.empty()) {
+        setenv("TZ", oldTz.c_str(), 1);
     } else {
         unsetenv("TZ");
     }
     tzset();
 
-    char buf[12];
+    char buf[32];
     strftime(buf, sizeof(buf), "%Y%m%d:%H%M", &tmInfo);
     return std::string(buf);
 }
 
 bool IbkrClient::isSessionActive(const std::string &hoursStr, const std::string &tzId) const {
     if (hoursStr.empty())
-        return true;
+        return true; // Activos 24/7 sin restricción (ej. Cripto)
 
-    std::string nowStr = getCurrentTimeTz(tzId);
+    std::string nowStr = getCurrentTimeInTz(tzId);
     std::stringstream ss(hoursStr);
     std::string token;
+
+    std::cout << "    [DEBUG] Hora en Exchange (" << tzId << "): " << nowStr << std::endl;
 
     while (std::getline(ss, token, ';')) {
         if (token.empty())
@@ -127,8 +142,9 @@ bool IbkrClient::isSessionActive(const std::string &hoursStr, const std::string 
             std::string startStr = token.substr(0, dash);
             std::string endStr = token.substr(dash + 1);
 
-            // Comparación lexicográfica directa formato ISO YYYYMMDD:HHMM
             if (nowStr >= startStr && nowStr < endStr) {
+                std::cout << "    [DEBUG] Coincidencia con sesión: " << startStr << " -> " << endStr
+                          << std::endl;
                 return true;
             }
         }

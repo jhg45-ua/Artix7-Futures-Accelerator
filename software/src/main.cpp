@@ -18,7 +18,7 @@ int main(int argc, char **argv) {
     IbkrClient client(&uart);
 
     // Conexión a IB Gateway (Headless) en localhost, puerto 4002. Client ID 1.
-    if (client.connect("127.0.0.1", 4002, 1)) {
+    if (client.connect("127.0.0.1", 7497, 1)) {
         std::cout << "Conectado exitosamente al IB Gateway." << std::endl;
         // Esperar estabilización del socket
         std::this_thread::sleep_for(std::chrono::milliseconds(300));
@@ -43,7 +43,7 @@ int main(int argc, char **argv) {
         // TagValueListSPtr());
 
         // 1. Instanciar contrato con ContractFactory (Ej: MES o BTC)
-        Contract target = ContractFactory::makeMicroFuture("MS", "202609");
+        Contract target = ContractFactory::makeMicroFuture("MES", "202609");
         std::cout << "[*] Verificando especificaciones de: "
                   << ContractFactory::dumpContract(target) << std::endl;
 

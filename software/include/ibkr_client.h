@@ -43,7 +43,7 @@ class IbkrClient : public DefaultEWrapper {
   private:
     void processMessages();
     bool isSessionActive(const std::string &hoursStr, const std::string &tzId) const;
-    std::string getCurrentTimeTz(const std::string &tzId) const;
+    std::string getCurrentTimeInTz(const std::string &tzId) const;
 
     EReaderOSSignal m_osSignal;
     std::unique_ptr<EClientSocket> m_client;
