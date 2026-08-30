@@ -1,7 +1,9 @@
 #include "ibkr_client.h"
 #include "Contract.h"
 #include "protocol.h"
+#include <chrono>
 #include <iostream>
+#include <mutex>
 
 IbkrClient::IbkrClient(UartInterface *uart)
     : m_osSignal(2000), m_uart(uart) { // Timeout de 2000ms para la señal
@@ -41,6 +43,28 @@ void IbkrClient::processMessages() {
     }
 }
 
+bool IbkrClient::validateContract(int reqId, const Contract &contract, int timeoutMs) {
+    {
+        std::lock_guard<std::mutex> lock(m_valMutex);
+        m_valDone = false;
+        m_contractValid = false;
+        m_activeValidationReqId = reqId;
+    }
+
+    m_client->reqContractDetails(reqId, contract);
+    std::unique_lock<std::mutex> lock(m_valMutex);
+    bool finished = m_valCv.wait_for(lock, std::chrono::milliseconds(timeoutMs),
+                                     [this]() { return m_valDone; });
+
+    if (!finished) {
+        std::cerr << "[-] TIMEOUT: No hubo respuesta de IBKR al validar el contrato." << std::endl;
+        m_contractValid = false;
+        return false;
+    }
+
+    return m_contractValid.load();
+}
+
 void IbkrClient::tickPrice(int tickerId, TickType field, double price, const TickAttrib &attrib) {
     // Aquí recibimos el Tick de Micro Futuros.
     // field == 1 (Bid), field == 2 (Ask).
@@ -49,7 +73,7 @@ void IbkrClient::tickPrice(int tickerId, TickType field, double price, const Tic
     (void)tickerId;
     (void)attrib;
 
-    if (price <= 0.0) {
+    if (!m_contractValid.load() || price <= 0.0) {
         return;
     }
 
@@ -70,23 +94,30 @@ void IbkrClient::tickPrice(int tickerId, TickType field, double price, const Tic
 }
 
 void IbkrClient::contractDetails(int reqId, const ContractDetails &details) {
-    (void)reqId;
-    std::cout << "\n[+] === CONTRATO VALIDADO EN IBKR ===" << std::endl;
-    std::cout << "    - ConId:         " << details.contract.conId << std::endl;
-    std::cout << "    - Ticker Local:  " << details.contract.localSymbol << std::endl;
-    std::cout << "    - Zona Horaria:  " << details.timeZoneId << std::endl;
-    std::cout << "    - Trading Hours: " << details.tradingHours << std::endl;
-    std::cout << "    - Liquid Hours:  " << details.liquidHours << std::endl;
-    std::cout << "    - Min Tick Size: " << details.minTick << "\n" << std::endl;
+    std::lock_guard<std::mutex> lock(m_valMutex);
+    if (reqId == m_activeValidationReqId) {
+        m_activeDetails = details;
+        m_contractValid = true;
+
+        std::cout << "\n[+] === CONTRATO VALIDADO EN IBKR ===" << std::endl;
+        std::cout << "    - ConId:         " << details.contract.conId << std::endl;
+        std::cout << "    - Ticker Local:  " << details.contract.localSymbol << std::endl;
+        std::cout << "    - Zona Horaria:  " << details.timeZoneId << std::endl;
+        std::cout << "    - Trading Hours: " << details.tradingHours << std::endl;
+        std::cout << "    - Liquid Hours:  " << details.liquidHours << std::endl;
+        std::cout << "    - Min Tick Size: " << details.minTick << "\n" << std::endl;
+    }
 }
 
 void IbkrClient::contractDetailsEnd(int reqId) {
-    (void)reqId;
-    std::cout << "[+] Verificación de especificaciones de mercado completada.\n" << std::endl;
+    std::lock_guard<std::mutex> lock(m_valMutex);
+    if (reqId == m_activeValidationReqId) {
+        m_valDone = true;
+        m_valCv.notify_all();
+    }
 }
 
-void IbkrClient::error(int id, long long errorTimeMs, int errorCode,
-                       const std::string &errorString,
+void IbkrClient::error(int id, long long errorTimeMs, int errorCode, const std::string &errorString,
                        const std::string &advancedOrderRejectJson) {
     (void)errorTimeMs;
     (void)advancedOrderRejectJson;

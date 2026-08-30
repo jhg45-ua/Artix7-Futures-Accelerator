@@ -21,7 +21,7 @@ int main(int argc, char **argv) {
     if (client.connect("127.0.0.1", 4002, 1)) {
         std::cout << "Conectado exitosamente al IB Gateway." << std::endl;
         // Esperar estabilización del socket
-        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));
 
         // // Solicitar datos retrasados gratuitos (3) si no hay subscripcion live, o
         // // (1) para live
@@ -43,19 +43,26 @@ int main(int argc, char **argv) {
         // TagValueListSPtr());
 
         // 1. Generar contrato con ContractFactory
-        Contract target = ContractFactory::makeMicroFuture("MS", "202609");
+        Contract target = ContractFactory::makeMicroFuture("MES", "202609");
         std::cout << "[*] Consultando especificaciones de: "
                   << ContractFactory::dumpContract(target) << std::endl;
 
-        // 2. Pre-validación del contrato
-        client.client()->reqContractDetails(2001, target);
-        std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+        // 2. Validación síncrona determinista
+        if (!client.validateContract(2001, target, 3000)) {
+            std::cerr
+                << "[-] VALIDACIÓN FALLIDA: El contrato no existe o el broker lo ha rechazado."
+                << std::endl;
+            std::cerr << "[-] Pipeline cancelado. No se solicitarán datos de mercado ni se "
+                         "emitirán paquetes a la FPGA."
+                      << std::endl;
+            return 1;
+        }
 
         // 3. Suscribir a flujo de datos (3 = Delayed gratuito)
         client.client()->reqMarketDataType(3);
         client.client()->reqMktData(1001, target, "", false, false, TagValueListSPtr());
 
-        std::cout << "[+] Pipeline activo. Esperando cotizaciones...\n" << std::endl;
+        std::cout << "[+] Pipeline activo y blindado. Esperando cotizaciones...\n" << std::endl;
 
         // Mantener el hilo principal vivo (simulación)
         while (true) {

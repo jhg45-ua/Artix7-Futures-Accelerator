@@ -1,6 +1,9 @@
 #pragma once
 #include "uart_interface.h"
+#include <atomic>
+#include <condition_variable>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <twsapi/Contract.h>
@@ -19,6 +22,9 @@ class IbkrClient : public DefaultEWrapper {
     void setUart(UartInterface *uart) { m_uart = uart; }
     EClientSocket *client() { return m_client.get(); }
 
+    bool validateContract(int reqId, const Contract &contract, int timeoutMs = 3000);
+    bool isContractValid() const { return m_contractValid.load(); };
+
     using DefaultEWrapper::error;
 
     // Callbacks de EWrapper sobrecargados
@@ -29,8 +35,7 @@ class IbkrClient : public DefaultEWrapper {
     void contractDetailsEnd(int reqId) override;
 
     // Callback de gestion de errores
-    void error(int id, long long errorTimeMs, int errorCode,
-               const std::string &errorString,
+    void error(int id, long long errorTimeMs, int errorCode, const std::string &errorString,
                const std::string &advancedOrderRejectJson) override;
 
   private:
@@ -42,4 +47,11 @@ class IbkrClient : public DefaultEWrapper {
     std::thread m_readerThread;
 
     UartInterface *m_uart;
+
+    std::mutex m_valMutex;
+    std::condition_variable m_valCv;
+    bool m_valDone;
+    int m_activeValidationReqId;
+    std::atomic<bool> m_contractValid;
+    ContractDetails m_activeDetails;
 };
