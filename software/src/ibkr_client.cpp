@@ -1,14 +1,12 @@
 #include "ibkr_client.h"
-#include "Contract.h"
 #include "protocol.h"
+#include <atomic>
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
 #include <iostream>
-#include <mutex>
 #include <sstream>
-#include <string>
 
 IbkrClient::IbkrClient(UartInterface *uart)
     : m_osSignal(2000), m_running(false), m_uart(uart), m_valDone(false),
@@ -29,10 +27,11 @@ bool IbkrClient::connect(const char *host, int port, int clientId) {
         m_reader = std::unique_ptr<EReader>(new EReader(m_client.get(), &m_osSignal));
         m_reader->start();
 
-        // Lanzamos el hilo secundario que esperará en el socket crudo de IBKR
+        // Hilo productor de red
         m_readerThread = std::thread(&IbkrClient::processMessages, this);
-        // No hacemos detach() para evitar hilos huerfanos
-        // m_readerThread.detach();
+
+        // Hilo consumidor de UART
+        m_uartThread = std::thread(&IbkrClient::uartWorker, this);
     }
     return connected;
 }
@@ -43,8 +42,12 @@ void IbkrClient::disconnect() {
             m_client->eDisconnect();
         }
         m_osSignal.issueSignal();
+
         if (m_readerThread.joinable()) {
             m_readerThread.join();
+        }
+        if (m_uartThread.joinable()) {
+            m_uartThread.join();
         }
     }
 }
@@ -54,6 +57,32 @@ void IbkrClient::processMessages() {
         // Bloquea el hilo hasta que EReaderOSSignal despierta vía variable de condición
         m_osSignal.waitForSignal();
         m_reader->processMsgs(); // Decodifica y dispara callbacks como tickPrice
+    }
+}
+
+void IbkrClient::uartWorker() {
+    FpgaTickPacket packet;
+
+    while (m_running.load(std::memory_order_relaxed)) {
+        if (m_spscQueue.pop(packet)) {
+            if (m_uart && m_uart->isOpen()) {
+                m_uart->sendPacket(packet);
+            }
+        } else {
+// Instrucción de pausa de CPU para mitigar consumo de pipeline en x86
+#if defined(__x86_64__) || defined(_M_X64)
+            __builtin_ia32_pause();
+#else
+            std::this_thread::yield();
+#endif
+        }
+    }
+
+    // Drenar los paquetes restantes en la cola antes de terminar
+    while (m_spscQueue.pop(packet)) {
+        if (m_uart && m_uart->isOpen()) {
+            m_uart->sendPacket(packet);
+        }
     }
 }
 
@@ -79,9 +108,7 @@ bool IbkrClient::validateContract(int reqId, const Contract &contract, int timeo
     return m_contractValid.load();
 }
 
-// -------------------------------------------------------------
 // Control y Verificación de Horario de Mercado
-// -------------------------------------------------------------
 std::string IbkrClient::getCurrentTimeInTz(const std::string &tzId) const {
     time_t now = time(nullptr);
 
@@ -169,7 +196,7 @@ void IbkrClient::tickPrice(int tickerId, TickType field, double price, const Tic
     (void)tickerId;
     (void)attrib;
 
-    if (!m_contractValid.load() || price <= 0.0) {
+    if (!m_contractValid.load(std::memory_order_relaxed) || price <= 0.0) {
         return;
     }
 
@@ -179,9 +206,8 @@ void IbkrClient::tickPrice(int tickerId, TickType field, double price, const Tic
         packet.order_type = (field == 1 || field == 66) ? 'B' : 'A';
         packet.price = price;
 
-        if (m_uart && m_uart->isOpen()) {
-            m_uart->sendPacket(packet);
-        }
+        // Encolar de forma no bloqueante hacia el hilo UART
+        m_spscQueue.push(packet);
 
         // Salida ligera para monitorización
         std::cout << "[TICK -> FPGA] Tipo: " << packet.order_type << " | Precio: " << packet.price
@@ -218,6 +244,13 @@ void IbkrClient::error(int id, long long errorTimeMs, int errorCode, const std::
     (void)errorTimeMs;
     (void)advancedOrderRejectJson;
 
+    if (id == m_activeValidationReqId && errorCode == 200) {
+        std::lock_guard<std::mutex> lock(m_valMutex);
+        m_contractValid = false;
+        m_valDone = true;
+        m_valCv.notify_all();
+    }
+
     switch (errorCode) {
     case 200:
         std::cout << "[-] ERROR [200] (reqId=" << id
@@ -240,8 +273,6 @@ void IbkrClient::error(int id, long long errorTimeMs, int errorCode, const std::
     case 2108:
     case 2119:
     case 2158:
-        // Sincronización normal de granjas de datos (usfuture, secdef, etc.) - Silenciado para
-        // evitar saturar stdout
         break;
     default:
         if (errorCode >= 2000) {

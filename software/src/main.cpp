@@ -39,6 +39,7 @@ int main(int argc, char **argv) {
 
         // Instanciar contrato con ContractFactory (Ej: MES o BTC)
         Contract target = ContractFactory::makeMicroFuture(config.symbol, config.expiry);
+        // Contract target = ContractFactory::makeCrypto("BTC");
         std::cout << "[*] Verificando especificaciones de: "
                   << ContractFactory::dumpContract(target) << std::endl;
 

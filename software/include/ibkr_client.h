@@ -1,4 +1,5 @@
 #pragma once
+#include "lockfree_queue.h"
 #include "uart_interface.h"
 #include <atomic>
 #include <condition_variable>
@@ -58,6 +59,8 @@ class IbkrClient : public DefaultEWrapper {
   private:
     // Método para procesar mensajes de IBKR
     void processMessages();
+    // Bucle del consumidor dedicado a la UART
+    void uartWorker();
     // Método para verificar si el mercado está activo
     bool isSessionActive(const std::string &hoursStr, const std::string &tzId) const;
     // Método para obtener la hora actual en una zona horaria
@@ -71,11 +74,15 @@ class IbkrClient : public DefaultEWrapper {
     std::unique_ptr<EReader> m_reader;
     // Hilo para procesar mensajes de IBKR
     std::thread m_readerThread;
+    // Hilo consumidor
+    std::thread m_uartThread;
     // Variable atómica para controlar el estado del hilo de lectura
     std::atomic<bool> m_running;
 
     // Interfaz UART para comunicar con la FPGA
     UartInterface *m_uart;
+    LockFreeSPSCQueue<FpgaTickPacket, 1024> m_spscQueue; // Cola Lock-Free SPSC
+
     // Mutex y variable de condición para sincronización de validación de contratos
     std::mutex m_valMutex;
     std::condition_variable m_valCv;

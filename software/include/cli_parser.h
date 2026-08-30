@@ -4,13 +4,13 @@
 
 // Estructura para almacenar la configuración del cliente
 struct CliConfig {
-    std::string symbol;         // Simbolo del instrumento
-    std::string expiry;         // Fecha de vencimiento
-    std::string uartPort;       // Puerto UART
-    int ibPort;                 // Puerto IBKR
-    int clientId;               // ID de cliente
-    bool valid;                 // Validez de la configuración
-    bool helpRequested = false; // Solicitud de ayuda
+    std::string symbol;                    // Simbolo del instrumento
+    std::string expiry;                    // Fecha de vencimiento
+    std::string uartPort = "/dev/ttyUSB1"; // Puerto UART
+    int ibPort = 7497;                     // Puerto IBKR (IB Gateway Paper por defecto)
+    int clientId = 0;                      // ID de cliente
+    bool valid = false;                    // Validez de la configuración
+    bool helpRequested = false;            // Solicitud de ayuda
 };
 
 // Clase para parsear la configuración del cliente
@@ -54,6 +54,12 @@ class CliParser {
             }
         }
 
+        // Validación de parámetros obligatorios
+        cfg.valid = !cfg.symbol.empty() && !cfg.expiry.empty();
+        if (!cfg.valid) {
+            std::cerr << "[-] Error: Los parámetros -s (symbol) y -e (expiry) son obligatorios."
+                      << std::endl;
+        }
         return cfg;
     }
 
