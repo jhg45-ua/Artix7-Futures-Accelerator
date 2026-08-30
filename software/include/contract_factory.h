@@ -1,15 +1,16 @@
 #pragma once
-#include <sstream>
+#include <format>
 #include <string>
+#include <string_view>
 #include <twsapi/Contract.h>
 
 class ContractFactory {
   public:
     // Micro futuros CME (Seguidor en el Arbitraje: MES, MCL, etc..)
-    static Contract makeMicroFuture(const std::string &symbol = "MES",
-                                    const std::string &expiry = "202609",
-                                    const std::string &exchange = "CME",
-                                    const std::string &currency = "USD") {
+    [[nodiscard]] static Contract makeMicroFuture(const std::string_view &symbol = "MES",
+                                                  const std::string_view &expiry = "202609",
+                                                  const std::string_view &exchange = "CME",
+                                                  const std::string_view &currency = "USD") {
         Contract c;
         c.symbol = symbol;
         c.secType = "FUT";
@@ -20,10 +21,10 @@ class ContractFactory {
     }
 
     // Futuros institucionales CME/NYMEX (Lider en el Arbitraje: ES, CL, etc..)
-    static Contract makeFuture(const std::string &symbol = "ES",
-                               const std::string &expiry = "202609",
-                               const std::string &exchange = "CME",
-                               const std::string &currency = "USD") {
+    [[nodiscard]] static Contract makeFuture(const std::string_view &symbol = "ES",
+                                             const std::string_view &expiry = "202609",
+                                             const std::string_view &exchange = "CME",
+                                             const std::string_view &currency = "USD") {
         Contract c;
         c.symbol = symbol;
         c.secType = "FUT";
@@ -34,9 +35,9 @@ class ContractFactory {
     }
 
     // Criptomonedas 24/7 (PAXOS)
-    static Contract makeCrypto(const std::string &symbol = "BTC",
-                               const std::string &exchange = "PAXOS",
-                               const std::string &currency = "USD") {
+    [[nodiscard]] static Contract makeCrypto(const std::string_view &symbol = "BTC",
+                                             const std::string_view &exchange = "PAXOS",
+                                             const std::string_view &currency = "USD") {
         Contract c;
         c.symbol = symbol;
         c.secType = "CRYPTO";
@@ -46,8 +47,9 @@ class ContractFactory {
     }
 
     // Forex Spot (IDEALPRO)
-    static Contract makeForex(const std::string &base = "EUR", const std::string &quote = "USD",
-                              const std::string &exchange = "IDEALPRO") {
+    [[nodiscard]] static Contract makeForex(const std::string_view &base = "EUR",
+                                            const std::string_view &quote = "USD",
+                                            const std::string_view &exchange = "IDEALPRO") {
         Contract c;
         c.symbol = base;
         c.secType = "CASH";
@@ -57,9 +59,9 @@ class ContractFactory {
     }
 
     // Acciones / ETFs (SMART Routing)
-    static Contract makeStock(const std::string &symbol = "AAPL",
-                              const std::string &exchange = "SMART",
-                              const std::string &currency = "USD") {
+    [[nodiscard]] static Contract makeStock(const std::string_view &symbol = "AAPL",
+                                            const std::string_view &exchange = "SMART",
+                                            const std::string_view &currency = "USD") {
         Contract c;
         c.symbol = symbol;
         c.secType = "STK";
@@ -68,13 +70,11 @@ class ContractFactory {
         return c;
     }
 
-    static std::string dumpContract(const Contract &c) {
-        std::ostringstream oss;
-        oss << "[" << c.secType << "] " << c.symbol;
+    [[nodiscard]] static std::string dumpContract(const Contract &c) {
         if (!c.lastTradeDateOrContractMonth.empty()) {
-            oss << " (Exp: " << c.lastTradeDateOrContractMonth << ")";
+            return std::format("[{}] {} (Exp: {}) @ {} ({})", c.secType, c.symbol,
+                               c.lastTradeDateOrContractMonth, c.exchange, c.currency);
         }
-        oss << " @ " << c.exchange << " (" << c.currency << ")";
-        return oss.str();
+        return std::format("[{}] {} @ {} ({})", c.secType, c.symbol, c.exchange, c.currency);
     }
 };

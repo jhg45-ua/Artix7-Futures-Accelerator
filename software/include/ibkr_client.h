@@ -7,6 +7,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <twsapi/Contract.h>
 #include <twsapi/DefaultEWrapper.h>
@@ -23,25 +24,27 @@ class IbkrClient : public DefaultEWrapper {
     ~IbkrClient();
 
     // Método para conectar al IBKR
-    bool connect(const char *host, int port, int clientId);
+    [[nodiscard]] bool connect(std::string_view host, int port, int clientId);
     // Método para desconectar del IBKR
     void disconnect();
     // Método para establecer la UART
-    void setUart(UartInterface *uart) { m_uart = uart; }
+    void setUart(UartInterface *uart) noexcept { m_uart = uart; }
     // Método para obtener el cliente de IBKR
-    EClientSocket *client() { return m_client.get(); }
+    [[nodiscard]] EClientSocket *client() noexcept { return m_client.get(); }
 
     // Método para validar el contrato
-    bool validateContract(int reqId, const Contract &contract, int timeoutMs = 3000);
+    [[nodiscard]] bool validateContract(int reqId, const Contract &contract, int timeoutMs = 3000);
     // Método para verificar si el mercado está abierto
-    bool isMarketOpen(bool checkLiquidOnly = false) const;
+    [[nodiscard]] bool isMarketOpen(bool checkLiquidOnly = false) const;
     // Método para verificar si el contrato es válido
-    bool isContractValid() const { return m_contractValid.load(); };
+    [[nodiscard]] bool isContractValid() const noexcept { return m_contractValid.load(); };
     // Método para obtener los detalles del contrato
-    const ContractDetails &getContractDetails() const { return m_activeDetails; }
+    [[nodiscard]] const ContractDetails &getContractDetails() const noexcept {
+        return m_activeDetails;
+    }
 
     // Acceso al estado actual del libro de órdenes
-    const OrderBook &getOrderBook() const { return m_orderBook; }
+    [[nodiscard]] const OrderBook &getOrderBook() const noexcept { return m_orderBook; }
 
     // Callbacks de EWrapper sobrecargados
     using DefaultEWrapper::error;
@@ -66,9 +69,9 @@ class IbkrClient : public DefaultEWrapper {
     // Bucle del consumidor dedicado a la UART
     void uartWorker();
     // Método para verificar si el mercado está activo
-    bool isSessionActive(const std::string &hoursStr, const std::string &tzId) const;
+    [[nodiscard]] bool isSessionActive(std::string_view hoursStr, std::string_view tzId) const;
     // Método para obtener la hora actual en una zona horaria
-    std::string getCurrentTimeInTz(const std::string &tzId) const;
+    [[nodiscard]] std::string getCurrentTimeInTz(std::string_view tzId) const;
 
     // Señal para notificar al hilo de lectura
     EReaderOSSignal m_osSignal;
@@ -77,9 +80,9 @@ class IbkrClient : public DefaultEWrapper {
     // Lector de mensajes de IBKR
     std::unique_ptr<EReader> m_reader;
     // Hilo para procesar mensajes de IBKR
-    std::thread m_readerThread;
+    std::jthread m_readerThread;
     // Hilo consumidor
-    std::thread m_uartThread;
+    std::jthread m_uartThread;
     // Variable atómica para controlar el estado del hilo de lectura
     std::atomic<bool> m_running;
 

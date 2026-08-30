@@ -1,11 +1,11 @@
 #pragma once
 #include <atomic>
+#include <bit>
 #include <cstddef>
 
-template <typename T, size_t Capacity = 1024> class LockFreeSPSCQueue {
-    static_assert((Capacity & (Capacity - 1)) == 0, "Capacity must be a power of 2");
-    static_assert(Capacity >= 2, "Capacity must be at least 2");
-
+template <typename T, size_t Capacity = 1024>
+    requires(Capacity >= 2 && std::has_single_bit(Capacity))
+class LockFreeSPSCQueue {
   public:
     LockFreeSPSCQueue() : m_head(0), m_tail(0) {}
     ~LockFreeSPSCQueue() = default;
@@ -13,9 +13,11 @@ template <typename T, size_t Capacity = 1024> class LockFreeSPSCQueue {
     // Deshabilitar copia y asignación para garantizar seguridad concurrente
     LockFreeSPSCQueue(const LockFreeSPSCQueue &) = delete;
     LockFreeSPSCQueue &operator=(const LockFreeSPSCQueue &) = delete;
+    LockFreeSPSCQueue(LockFreeSPSCQueue &&) = delete;
+    LockFreeSPSCQueue &operator=(LockFreeSPSCQueue &&) = delete;
 
     // Productor: Ejecutando exclusivamente por el hilo EReader (tickPrice)
-    bool push(const T &item) {
+    [[nodiscard]] bool push(const T &item) noexcept {
         const size_t currentTail = m_tail.load(std::memory_order_relaxed);
         const size_t currentHead = m_head.load(std::memory_order_acquire);
 
@@ -30,7 +32,7 @@ template <typename T, size_t Capacity = 1024> class LockFreeSPSCQueue {
     }
 
     // Consumidor: Ejecutado exclusivamente por el hilo dedicado de la UART
-    bool pop(T &item) {
+    [[nodiscard]] bool pop(T &item) noexcept {
         const size_t currentHead = m_head.load(std::memory_order_relaxed);
         const size_t currentTail = m_tail.load(std::memory_order_acquire);
 
@@ -44,11 +46,11 @@ template <typename T, size_t Capacity = 1024> class LockFreeSPSCQueue {
         return true;
     }
 
-    bool empty() const {
+    [[nodiscard]] bool empty() const noexcept {
         return m_head.load(std::memory_order_relaxed) == m_tail.load(std::memory_order_relaxed);
     }
 
-    size_t size() const {
+    [[nodiscard]] size_t size() const noexcept {
         size_t head = m_head.load(std::memory_order_relaxed);
         size_t tail = m_tail.load(std::memory_order_relaxed);
         return (tail >= head) ? (tail - head) : 0;

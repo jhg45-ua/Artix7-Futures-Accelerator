@@ -4,27 +4,28 @@
 
 class OrderBook {
   public:
-    OrderBook() : m_bestBid(0.0), m_bestAsk(0.0), m_hasBid(false), m_hasAsk(false) {}
+    constexpr OrderBook() noexcept
+        : m_bestBid(0.0), m_bestAsk(0.0), m_hasBid(false), m_hasAsk(false) {}
 
     // Procesa un nuevo tick. Retorna true solo si el libro queda balanceado (Ask > Bid)
     // y rellena el struct FpgaTickPacket listo para encolar.
-    bool processTick(char side, double price, FpgaTickPacket &outPacket) {
+    [[nodiscard]] bool processTick(char side, double price, FpgaTickPacket &outPacket) noexcept {
         // 1. Descartar precios centinela (-1.0) o cotizaciones inválidas
-        if (price <= 0.0)
+        if (price <= 0.0) [[unlikely]]
             return false;
 
         // Actualizar el estado interno del libro
-        if (side == 'B') {
+        if (side == 'B') [[likely]] {
             m_bestBid = price;
             m_hasBid = true;
-        } else if (side == 'A') {
+        } else if (side == 'A') [[likely]] {
             m_bestAsk = price;
             m_hasAsk = true;
-        } else
+        } else [[unlikely]]
             return false;
 
         // Validar consistencia de mercado: ambos lados presentes y Ask > Bid
-        if (!isBalanced())
+        if (!isBalanced()) [[unlikely]]
             // Si el libro está cruzado (Bid >= Ask) por interleaving, descartamos el tick
             return false;
 
@@ -36,14 +37,18 @@ class OrderBook {
         return true;
     }
 
-    double getBid() const { return m_bestBid; }
-    double getAsk() const { return m_bestAsk; }
+    [[nodiscard]] constexpr double getBid() const noexcept { return m_bestBid; }
+    [[nodiscard]] constexpr double getAsk() const noexcept { return m_bestAsk; }
 
-    double getSpread() const { return (m_hasBid && m_hasAsk) ? (m_bestAsk - m_bestBid) : 0.0; }
+    [[nodiscard]] constexpr double getSpread() const noexcept {
+        return (m_hasBid && m_hasAsk) ? (m_bestAsk - m_bestBid) : 0.0;
+    }
 
-    bool isBalanced() const { return m_hasBid && m_hasAsk && (m_bestAsk > m_bestBid); }
+    [[nodiscard]] constexpr bool isBalanced() const noexcept {
+        return m_hasBid && m_hasAsk && (m_bestAsk > m_bestBid);
+    }
 
-    void reset() {
+    constexpr void reset() noexcept {
         m_bestBid = 0.0;
         m_bestAsk = 0.0;
         m_hasBid = false;

@@ -1,11 +1,12 @@
 #include "ibkr_client.h"
 #include "protocol.h"
-#include <atomic>
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <format>
 #include <iostream>
+#include <memory>
 #include <sstream>
 
 IbkrClient::IbkrClient(UartInterface *uart)
@@ -18,20 +19,21 @@ IbkrClient::~IbkrClient() {
     disconnect();
 }
 
-bool IbkrClient::connect(const char *host, int port, int clientId) {
-    bool connected = m_client->eConnect(host, port, clientId, false);
+bool IbkrClient::connect(std::string_view host, int port, int clientId) {
+    std::string hostStr(host);
+    bool connected = m_client->eConnect(hostStr.c_str(), port, clientId, false);
 
     if (connected) {
         m_running = true;
         // Inicializamos el lector secundario
-        m_reader = std::unique_ptr<EReader>(new EReader(m_client.get(), &m_osSignal));
+        m_reader = std::make_unique<EReader>(m_client.get(), &m_osSignal);
         m_reader->start();
 
         // Hilo productor de red
-        m_readerThread = std::thread(&IbkrClient::processMessages, this);
+        m_readerThread = std::jthread(&IbkrClient::processMessages, this);
 
         // Hilo consumidor de UART
-        m_uartThread = std::thread(&IbkrClient::uartWorker, this);
+        m_uartThread = std::jthread(&IbkrClient::uartWorker, this);
     }
     return connected;
 }
@@ -44,19 +46,20 @@ void IbkrClient::disconnect() {
         m_osSignal.issueSignal();
 
         if (m_readerThread.joinable()) {
+            m_readerThread.request_stop();
             m_readerThread.join();
         }
         if (m_uartThread.joinable()) {
+            m_uartThread.request_stop();
             m_uartThread.join();
         }
     }
 }
 
 void IbkrClient::processMessages() {
-    while (m_client->isConnected()) {
-        // Bloquea el hilo hasta que EReaderOSSignal despierta vía variable de condición
+    while (m_client->isConnected() && m_running.load(std::memory_order_relaxed)) {
         m_osSignal.waitForSignal();
-        m_reader->processMsgs(); // Decodifica y dispara callbacks como tickPrice
+        m_reader->processMsgs();
     }
 }
 
@@ -66,10 +69,12 @@ void IbkrClient::uartWorker() {
     while (m_running.load(std::memory_order_relaxed)) {
         if (m_spscQueue.pop(packet)) {
             if (m_uart && m_uart->isOpen()) {
-                m_uart->sendPacket(packet);
+                // Verificación del retorno de sendPacket
+                if (!m_uart->sendPacket(packet)) [[unlikely]] {
+                    std::cerr << "[-] Error de transmisión UART: fallo al enviar paquete a FPGA.\n";
+                }
             }
         } else {
-// Instrucción de pausa de CPU para mitigar consumo de pipeline en x86
 #if defined(__x86_64__) || defined(_M_X64)
             __builtin_ia32_pause();
 #else
@@ -78,10 +83,10 @@ void IbkrClient::uartWorker() {
         }
     }
 
-    // Drenar los paquetes restantes en la cola antes de terminar
+    // Drenar la cola residual antes de finalizar (Línea 86 corregida)
     while (m_spscQueue.pop(packet)) {
         if (m_uart && m_uart->isOpen()) {
-            m_uart->sendPacket(packet);
+            (void)m_uart->sendPacket(packet);
         }
     }
 }
@@ -100,7 +105,7 @@ bool IbkrClient::validateContract(int reqId, const Contract &contract, int timeo
                                      [this]() { return m_valDone; });
 
     if (!finished) {
-        std::cerr << "[-] TIMEOUT: No hubo respuesta de IBKR al validar el contrato." << std::endl;
+        std::cerr << "[-] TIMEOUT: No hubo respuesta de IBKR al validar el contrato.\n";
         m_contractValid = false;
         return false;
     }
@@ -108,12 +113,10 @@ bool IbkrClient::validateContract(int reqId, const Contract &contract, int timeo
     return m_contractValid.load();
 }
 
-// Control y Verificación de Horario de Mercado
-std::string IbkrClient::getCurrentTimeInTz(const std::string &tzId) const {
+std::string IbkrClient::getCurrentTimeInTz(std::string_view tzId) const {
     time_t now = time(nullptr);
 
-    // Normalización de identificadores de timezone de IBKR para glibc/Linux
-    std::string zoneName = tzId;
+    std::string zoneName(tzId);
     if (zoneName == "US/Central" || zoneName == "CST") {
         zoneName = "America/Chicago";
     } else if (zoneName == "US/Eastern" || zoneName == "EST") {
@@ -122,9 +125,7 @@ std::string IbkrClient::getCurrentTimeInTz(const std::string &tzId) const {
         zoneName = "America/Los_Angeles";
     }
 
-    // El prefijo ':' obliga a glibc a buscar el archivo exacto en /usr/share/zoneinfo/
     std::string tzRule = ":" + zoneName;
-
     char *prevTz = getenv("TZ");
     std::string oldTz = prevTz ? prevTz : "";
 
@@ -146,21 +147,19 @@ std::string IbkrClient::getCurrentTimeInTz(const std::string &tzId) const {
     return std::string(buf);
 }
 
-bool IbkrClient::isSessionActive(const std::string &hoursStr, const std::string &tzId) const {
-    if (hoursStr.empty())
-        return true; // Activos 24/7 sin restricción (ej. Cripto)
+bool IbkrClient::isSessionActive(std::string_view hoursStr, std::string_view tzId) const {
+    if (hoursStr.empty()) {
+        return true;
+    }
 
     std::string nowStr = getCurrentTimeInTz(tzId);
-    std::stringstream ss(hoursStr);
+    std::stringstream ss{std::string(hoursStr)};
     std::string token;
 
-    std::cout << "    [DEBUG] Hora en Exchange (" << tzId << "): " << nowStr << std::endl;
+    std::cout << "    [DEBUG] Hora en Exchange (" << tzId << "): " << nowStr << "\n";
 
     while (std::getline(ss, token, ';')) {
-        if (token.empty())
-            continue;
-
-        if (token.find("CLOSED") != std::string::npos) {
+        if (token.empty() || token.find("CLOSED") != std::string::npos) {
             continue;
         }
 
@@ -171,7 +170,7 @@ bool IbkrClient::isSessionActive(const std::string &hoursStr, const std::string 
 
             if (nowStr >= startStr && nowStr < endStr) {
                 std::cout << "    [DEBUG] Coincidencia con sesión: " << startStr << " -> " << endStr
-                          << std::endl;
+                          << "\n";
                 return true;
             }
         }
@@ -180,8 +179,9 @@ bool IbkrClient::isSessionActive(const std::string &hoursStr, const std::string 
 }
 
 bool IbkrClient::isMarketOpen(bool checkLiquidOnly) const {
-    if (!m_contractValid.load())
+    if (!m_contractValid.load()) {
         return false;
+    }
 
     const std::string &schedule =
         checkLiquidOnly ? m_activeDetails.liquidHours : m_activeDetails.tradingHours;
@@ -192,23 +192,27 @@ void IbkrClient::tickPrice(int tickerId, TickType field, double price, const Tic
     (void)tickerId;
     (void)attrib;
 
-    if (!m_contractValid.load(std::memory_order_relaxed)) {
+    if (!m_contractValid.load(std::memory_order_relaxed)) [[unlikely]] {
         return;
     }
 
-    // Filtro estricto: Descartar LAST (4/68), CLOSE (9/75) o cualquier dato que no sea BBO
+    // Filtro BBO estricto: Field ID 1/66 (Bid) o 2/67 (Ask)
     if (field == 1 || field == 2 || field == 66 || field == 67) {
         char side = (field == 1 || field == 66) ? 'B' : 'A';
         FpgaTickPacket packet;
 
-        // El libro de órdenes valida Ask > Bid antes de encolar
         if (m_orderBook.processTick(side, price, packet)) {
-            m_spscQueue.push(packet);
-
-            // Log de monitorización limpio
-            std::cout << "[TICK -> FPGA] Tipo: " << packet.order_type
-                      << " | Precio: " << packet.price << " | Field ID: " << static_cast<int>(field)
-                      << std::endl;
+            // Verificación del push en cola lock-free
+            if (!m_spscQueue.push(packet)) [[unlikely]] {
+                std::cerr << "[-] Buffer Overflow: Cola Lock-Free llena, tick descartado.\n";
+            } else {
+                // Copia local necesaria: los campos de structs __packed__ no pueden ligarse
+                // a referencias (double&), lo que provoca un error de compilación en GCC.
+                const double priceCopy = packet.price;
+                std::cout << std::format(
+                    "[TICK -> FPGA] Tipo: {} | Precio: {:.2f} | Field ID: {}\n",
+                    static_cast<char>(packet.order_type), priceCopy, static_cast<int>(field));
+            }
         }
     }
 }
@@ -219,13 +223,16 @@ void IbkrClient::contractDetails(int reqId, const ContractDetails &details) {
         m_activeDetails = details;
         m_contractValid = true;
 
-        std::cout << "\n[+] === CONTRATO VALIDADO EN IBKR ===" << std::endl;
-        std::cout << "    - ConId:         " << details.contract.conId << std::endl;
-        std::cout << "    - Ticker Local:  " << details.contract.localSymbol << std::endl;
-        std::cout << "    - Zona Horaria:  " << details.timeZoneId << std::endl;
-        std::cout << "    - Trading Hours: " << details.tradingHours << std::endl;
-        std::cout << "    - Liquid Hours:  " << details.liquidHours << std::endl;
-        std::cout << "    - Min Tick Size: " << details.minTick << "\n" << std::endl;
+        std::cout << std::format("\n[+] === CONTRATO VALIDADO EN IBKR ===\n"
+                                 "    - ConId:         {}\n"
+                                 "    - Ticker Local:  {}\n"
+                                 "    - Zona Horaria:  {}\n"
+                                 "    - Trading Hours: {}\n"
+                                 "    - Liquid Hours:  {}\n"
+                                 "    - Min Tick Size: {}\n\n",
+                                 details.contract.conId, details.contract.localSymbol,
+                                 details.timeZoneId, details.tradingHours, details.liquidHours,
+                                 details.minTick);
     }
 }
 

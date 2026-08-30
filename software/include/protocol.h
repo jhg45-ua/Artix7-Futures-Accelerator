@@ -1,7 +1,12 @@
 #pragma once
+#include <bit>
 #include <cstdint>
 
 // Cabecera que define la estructura de datos y protocolos de comunicación entre el PC y la FPGA
+
+// Validación de arquitectura en tiempo de compilación
+static_assert(std::endian::native == std::endian::little,
+              "La plataforma debe ser Little Endian para mapear IEEE 754 a la FPGA");
 
 // Definición de la estructura de datos que se envia a la FPGA
 struct __attribute__((__packed__)) FpgaTickPacket {
@@ -9,9 +14,9 @@ struct __attribute__((__packed__)) FpgaTickPacket {
     // Asegura que los datos en memoria contigua midan exactamente 10 bytes.
     uint8_t sync_magic; // 0x54 ('T') - Byte de sincronismo
     uint8_t order_type; // 'B' (Bid) o 'A' (Ask)
-    double price;       // 8 bytes (IEEE 754 64-bit Little Endian nativo x86_64)
+    double price;       // 8 bytes (IEEE 754 64-bit Little Endian)
 };
 
 // Barrera de seguridad en tiempo de compilación.
 // Si alguien modifica el struct, fallará el build antes de corromper el UART.
-static_assert(sizeof(FpgaTickPacket) == 10, "FpgaTickPacket MUST be exactly 10 bytes");
+static_assert(sizeof(FpgaTickPacket) == 10, "FpgaTickPacket debe medir exactamente 10 bytes");

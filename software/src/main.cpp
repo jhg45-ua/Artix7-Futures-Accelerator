@@ -1,4 +1,3 @@
-#include "Contract.h"
 #include "cli_parser.h"
 #include "contract_factory.h"
 #include "ibkr_client.h"
@@ -19,7 +18,7 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    std::cout << "Iniciando Artix7-Futures-Accelerator Host Engine..." << std::endl;
+    std::cout << "Iniciando Artix7-Futures-Accelerator Host Engine (C++20)..." << std::endl;
 
     UartInterface uart;
     // Intenta abrir el puerto serie; si la placa no está conectada, continúa en
