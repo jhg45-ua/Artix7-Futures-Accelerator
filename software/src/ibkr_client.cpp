@@ -189,8 +189,7 @@ bool IbkrClient::isMarketOpen(bool checkLiquidOnly) const {
 }
 
 void IbkrClient::tickPrice(int tickerId, TickType field, double price, const TickAttrib &attrib) {
-    // Aquí recibimos el Tick de Micro Futuros.
-    // field == 1 (Bid), field == 2 (Ask).
+    // Aquí recibimos el Tick del precio.
     // Indicamos explícitamente al compilador que ignoramos estos parámetros de la interfaz por
     // ahora
     (void)tickerId;
@@ -200,14 +199,15 @@ void IbkrClient::tickPrice(int tickerId, TickType field, double price, const Tic
         return;
     }
 
+    // 1 = Bid, 2 = Ask (Live) | 66 = Delayed Bid, 67 = Delayed Ask
     if (field == 1 || field == 2 || field == 66 || field == 67) {
+        char side = (field == 1 || field == 66) ? 'B' : 'A';
         FpgaTickPacket packet;
-        packet.sync_magic = 0x54;
-        packet.order_type = (field == 1 || field == 66) ? 'B' : 'A';
-        packet.price = price;
 
-        // Encolar de forma no bloqueante hacia el hilo UART
-        m_spscQueue.push(packet);
+        // El filtro descarta cotizaciones <= 0 y spreads invertidos (Bid >= Ask)
+        if (m_orderBook.processTick(side, price, packet)) {
+            m_spscQueue.push(packet);
+        }
 
         // Salida ligera para monitorización
         std::cout << "[TICK -> FPGA] Tipo: " << packet.order_type << " | Precio: " << packet.price

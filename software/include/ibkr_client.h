@@ -1,5 +1,6 @@
 #pragma once
 #include "lockfree_queue.h"
+#include "order_book.h"
 #include "uart_interface.h"
 #include <atomic>
 #include <condition_variable>
@@ -38,6 +39,9 @@ class IbkrClient : public DefaultEWrapper {
     bool isContractValid() const { return m_contractValid.load(); };
     // Método para obtener los detalles del contrato
     const ContractDetails &getContractDetails() const { return m_activeDetails; }
+
+    // Acceso al estado actual del libro de órdenes
+    const OrderBook &getOrderBook() const { return m_orderBook; }
 
     // Callbacks de EWrapper sobrecargados
     using DefaultEWrapper::error;
@@ -82,6 +86,7 @@ class IbkrClient : public DefaultEWrapper {
     // Interfaz UART para comunicar con la FPGA
     UartInterface *m_uart;
     LockFreeSPSCQueue<FpgaTickPacket, 1024> m_spscQueue; // Cola Lock-Free SPSC
+    OrderBook m_orderBook;                               // Filtro de spreads y libro en memoria
 
     // Mutex y variable de condición para sincronización de validación de contratos
     std::mutex m_valMutex;
