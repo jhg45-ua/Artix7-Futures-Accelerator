@@ -62,7 +62,7 @@ bool UartInterface::openPort(const std::string& portName, int baudRate) {
     }
 
     std::cout << "[+] UART conectada en " << portName << " a 115200 baudios (Modo RAW)." << std::endl;
-    return false;
+    return true;
 }
 
 void UartInterface::closePort() {
