@@ -2,7 +2,7 @@
 
 module tb_compute_core;
 
-  localparam int CLK_PERIOD_NS = 10;  // 100 MHz
+  localparam int CLK_PERIOD_NS = 10;  // 100 MHz (10 ns)
 
   logic        clk;
   logic        rst_n;
@@ -35,11 +35,11 @@ module tb_compute_core;
       .out_order_action(out_order_action)
   );
 
-  // Generador de Reloj
+  // Generador de Reloj (100 MHz)
   initial clk = 1'b0;
   always #(CLK_PERIOD_NS / 2) clk = ~clk;
 
-  // Tarea para enviar un tick en 1 ciclo
+  // Tarea de inyección síncrona
   task automatic inject_tick(input logic [7:0] side, input logic [63:0] price);
     begin
       @(posedge clk);
@@ -52,12 +52,9 @@ module tb_compute_core;
   endtask
 
   initial begin
-    // Valores de prueba IEEE 754
-    // 77790.0 = 0x40F2FD8000000000 (Menor que el límite)
-    // 77795.0 = 0x40F2FE6000000000 (Mayor que el límite -> Dispara orden)
-    localparam logic [63:0] PRICE_BID_LOW = 64'h40F2FD8000000000;
+    localparam logic [63:0] PRICE_BID_LOW = 64'h40F2FD8000000000;  // 77790.0 (< 77792.0)
     localparam logic [63:0] PRICE_ASK_INIT = 64'h40F2FDC000000000;
-    localparam logic [63:0] PRICE_BID_HIGH = 64'h40F2FE6000000000;
+    localparam logic [63:0] PRICE_BID_HIGH = 64'h40F2FE6000000000; // 77795.0 (> 77792.0 -> Dispara)
 
     in_tick_valid <= 1'b0;
     in_order_type <= 8'd0;
@@ -71,9 +68,9 @@ module tb_compute_core;
     $display("[TB] INICIANDO VERIFICACIÓN UNITARIA: COMPUTE_CORE");
     $display("========================================================");
 
-    // Paso 1: Inyectar Ask inicial y verificar que el libro no está listo
-    inject_tick(8'h41, PRICE_ASK_INIT);  // Ask
-    #(CLK_PERIOD_NS);
+    // Paso 1: Inyectar Ask inicial y comprobar que el libro no está listo
+    inject_tick(8'h41, PRICE_ASK_INIT);
+    #(1);  // Retardo para permitir la resolución del evento NBA
     if (!out_book_ready && out_best_ask === PRICE_ASK_INIT) begin
       $display("[+] Paso 1: Ask registrado correctamente. Libro pendiente de Bid [OK]");
     end else begin
@@ -81,16 +78,17 @@ module tb_compute_core;
     end
 
     // Paso 2: Inyectar Bid por debajo del umbral -> No debe disparar orden
-    inject_tick(8'h42, PRICE_BID_LOW);  // Bid
-    #(CLK_PERIOD_NS);
+    inject_tick(8'h42, PRICE_BID_LOW);
+    #(1);
     if (out_book_ready && out_best_bid === PRICE_BID_LOW && !out_order_fire) begin
       $display("[+] Paso 2: Bid registrado. Libro listo. Disparo inactivo [OK]");
     end else begin
       $fatal(1, "[-] Fallo en Paso 2.");
     end
 
-    // Paso 3: Inyectar Bid por encima del umbral -> Debe disparar orden en 1 ciclo
-    inject_tick(8'h42, PRICE_BID_HIGH);  // Bid que rompe umbral
+    // Paso 3: Inyectar Bid por encima del umbral -> Debe disparar orden
+    inject_tick(8'h42, PRICE_BID_HIGH);
+    #(1);  // Deja que out_order_fire pase a 1 tras el flanco de reloj
     if (out_order_fire && out_order_action === 8'h41) begin
       $display("[+] Paso 3: ¡DISPARO DETECTADO! Señal out_order_fire activa con acción %c [OK]",
                out_order_action);
@@ -98,8 +96,9 @@ module tb_compute_core;
       $fatal(1, "[-] Fallo en Paso 3: La condición algorítmica no disparó la orden.");
     end
 
-    // Paso 4: Comprobar que en el siguiente ciclo out_order_fire vuelve a 0
+    // Paso 4: Comprobar que en el siguiente ciclo out_order_fire vuelve a 0 (strobe de 10 ns)
     @(posedge clk);
+    #(1);
     if (!out_order_fire) begin
       $display(
           "[+] Paso 4: out_order_fire regresó a 0 en el siguiente ciclo (10 ns strobe verificado) [OK]");
