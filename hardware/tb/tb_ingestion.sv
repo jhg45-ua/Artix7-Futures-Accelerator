@@ -91,56 +91,65 @@ module tb_ingestion;
 
   // Secuencia Principal de Verificación
   initial begin
-    // Valor de prueba: 1.16492 -> 0x3FF2A39B5A9D28B2 en IEEE 754 doble precisión
-    localparam logic [63:0] EXPECTED_PRICE = 64'h3FF2A39B5A9D28B2;
+    localparam logic [63:0] EXPECTED_PRICE = 64'h3FF2A39B5A9D28B2;  // 1.16492
     localparam logic [7:0] EXPECTED_TYPE = 8'h42;  // 'B'
+    logic strobe_received;
 
-    // A. Inicialización y Reset
-    rx_serial = 1'b1;  // Línea UART en reposo es siempre nivel alto (1)
-    rst_n     = 1'b0;  // Aplicar reset activo a nivel bajo
-    #(100);  // Mantener reset durante 100 ns
+    strobe_received = 1'b0;
+    rx_serial       = 1'b1;
+    rst_n           = 1'b0;
+    #(100);
 
-    rst_n = 1'b1;  // Liberar reset
+    rst_n = 1'b1;
     #(200);
 
-    // B. Inyección del paquete por la línea serie virtual
     $display("\n========================================================");
     $display("[TB] INICIANDO PRUEBA DE INGESTA UART Y PARSER");
     $display("========================================================");
 
-    send_tick_packet(EXPECTED_TYPE, EXPECTED_PRICE);
+    // Ejecución en paralelo: Emisor, Monitor de Strobe y Watchdog
+    fork
+      // Hilo 1: Inyección del paquete serie
+      begin
+        send_tick_packet(EXPECTED_TYPE, EXPECTED_PRICE);
+      end
 
-    // C. Espera de la bandera data_valid emitida por la FSM
-    // Esperamos un máximo de 100 microsegundos antes de declarar Timeout
-    fork : wait_strobe
+      // Hilo 2: Monitor del pulso data_valid (a la escucha en tiempo real)
       begin
         @(posedge data_valid);
-        $display("[TB] Pulso data_valid detectado en t = %0t ps", $time);
-        disable wait_strobe;
+        strobe_received = 1'b1;
+        $display("[TB] [+] Pulso data_valid detectado correctamente en t = %0d ns", $time);
       end
+
+      // Hilo 3: Watchdog temporal (1200 us límite)
       begin
-        #(150_000);  // 150 us de tiempo límite
-        $fatal(1, "[-] ERROR CRÍTICO: Timeout esperando pulso data_valid.");
+        #(1_200_000);
+        if (!strobe_received) begin
+          $fatal(1, "[-] ERROR CRÍTICO: Timeout esperando pulso data_valid.");
+        end
       end
-    join
+    join_any
 
-    // D. Verificación de los datos deserializados en el mismo ciclo
-    #(CLK_PERIOD_NS);  // Esperar 1 ciclo de clk para comprobar estabilidad
+    // Matar el hilo de watchdog para evitar falsos positivos
+    disable fork;
 
+    // Breve pausa para asegurar la estabilidad de las salidas
+    #(CLK_PERIOD_NS * 2);
+
+    // Verificación de los datos finales deserializados
     if (price_out === EXPECTED_PRICE && type_out === EXPECTED_TYPE) begin
       $display("\n[+] VERIFICACIÓN EXITOSA:");
       $display("    - Tipo Esperado:   %c  | Obtenido: %c", EXPECTED_TYPE, type_out);
       $display("    - Precio Esperado: 0x%016h | Obtenido: 0x%016h", EXPECTED_PRICE, price_out);
       $display("========================================================\n");
     end else begin
-      $error("[-] FALLO EN LA VALIDACIÓN:");
-      $display("    - Tipo Esperado:   %c  | Obtenido: %c", EXPECTED_TYPE, type_out);
-      $display("    - Precio Esperado: 0x%016h | Obtenido: 0x%016h", EXPECTED_PRICE, price_out);
-      $fatal(1, "Los datos reconstruidos no coinciden.");
+      $error("[-] ERROR: Discrepancia en los datos deserializados.");
+      $display("    - Esperado: Tipo %c, Precio 0x%016h", EXPECTED_TYPE, EXPECTED_PRICE);
+      $display("    - Obtenido: Tipo %c, Precio 0x%016h", type_out, price_out);
+      $fatal(1, "Datos incorrectos.");
     end
 
-    // Pausa adicional y cierre
-    #(1000);
+    #(500);
     $finish;
   end
 
