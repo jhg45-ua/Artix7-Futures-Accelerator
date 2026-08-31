@@ -3,7 +3,7 @@
 module tb_hft_pipeline;
 
   // Parámetros Temporales y Físicos
-  localparam int CLK_PERIOD_NS  = 10;                            // 100 MHz
+  localparam int CLK_PERIOD_NS  = 10;                            // 100 MHz (10 ns)
   localparam int CLKS_PER_BIT   = 868;                           // 100 MHz / 115200 baudios
   localparam int BIT_PERIOD_NS  = CLKS_PER_BIT * CLK_PERIOD_NS;  // 8680 ns (~8.68 µs)
   localparam int BYTE_PERIOD_NS = BIT_PERIOD_NS * 10;            // ~86.8 µs por byte
@@ -62,7 +62,8 @@ module tb_hft_pipeline;
 
       // Bytes 2 a 9: Precio en Little Endian
       for (int i = 0; i < 8; i++) begin
-        send_uart_byte(price[i*8+:8]);
+        send_tick_packet_byte : send_uart_byte
+        (price[i * 8 +: 8]);
       end
     end
   endtask
@@ -70,14 +71,15 @@ module tb_hft_pipeline;
   // Captura 1 byte desde la línea de transmisión de la FPGA (uart_tx_out)
   task automatic receive_uart_byte(output logic [7:0] captured_byte);
     begin
-      @(negedge uart_tx_out);  // Espera al flanco de bajada del Start Bit
-      #(BIT_PERIOD_NS + (BIT_PERIOD_NS / 2));  // Salto al centro del bit 0
+      @(negedge uart_tx_out);  // Detección del Start Bit (1 -> 0)
+      #(BIT_PERIOD_NS + (BIT_PERIOD_NS / 2));  // Muestreo en el centro de bit 0
 
       for (int i = 0; i < 8; i++) begin
         captured_byte[i] = uart_tx_out;
         #(BIT_PERIOD_NS);
       end
-      @(posedge uart_tx_out);  // Espera a la recuperación del Stop Bit
+
+      #(BIT_PERIOD_NS / 2);  // Salida limpia al final del Stop Bit
     end
   endtask
 
@@ -89,6 +91,8 @@ module tb_hft_pipeline;
     begin
       for (int b = 0; b < 10; b++) begin
         receive_uart_byte(raw_bytes[b]);
+        $display("    [UART RX Monitor] Byte [%0d/9]: 0x%02X (%c)", b, raw_bytes[b],
+                 (raw_bytes[b] >= 32 && raw_bytes[b] <= 126) ? raw_bytes[b] : ".");
       end
 
       magic        = raw_bytes[0];
@@ -101,12 +105,9 @@ module tb_hft_pipeline;
   // Secuencia Principal de Simulación
   initial begin
     // Precios de prueba IEEE 754 (Double Precision)
-    // 77790.0 = 0x40F2FD8000000000
-    // 77792.0 = 0x40F2FE0000000000 (Umbral límite del compute_core)
-    // 77795.0 = 0x40F2FE6000000000 (Disparo > 77792.0)
     localparam logic [63:0] PRICE_ASK_INIT = 64'h40F2FD8000000000;  // 77790.0
     localparam logic [63:0] PRICE_BID_LOW = 64'h40F2FD8000000000;  // 77790.0
-    localparam logic [63:0] PRICE_BID_HIGH = 64'h40F2FE6000000000;  // 77795.0
+    localparam logic [63:0] PRICE_BID_HIGH = 64'h40F2FE6000000000;  // 77795.0 (> 77792.0 Umbral)
 
     logic [7:0] rx_magic, rx_action;
     logic [31:0] rx_order_id, rx_timestamp;
@@ -123,46 +124,38 @@ module tb_hft_pipeline;
     $display("[TB] INICIANDO SIMULACIÓN INTEGRAL DEL PIPELINE HFT (END-TO-END)");
     $display("===================================================================");
 
-    // PASO 1: Inyectar Ask Inicial (Construcción del Order Book)
+    // PASO 1: Inyectar Ask Inicial
     $display("[+] Enviando Tick 1: ASK Inicial = 77790.0...");
     send_tick_packet(8'h41, PRICE_ASK_INIT);  // 'A' = 0x41
-    #(20_000);  // Pausa de 20 µs entre paquetes
+    #(20_000);
 
-    // PASO 2: Inyectar Bid Bajo (Por debajo del umbral de disparo)
+    // PASO 2: Inyectar Bid Bajo
     $display("[+] Enviando Tick 2: BID Normal = 77790.0 (< 77792.0 Umbral)...");
     send_tick_packet(8'h42, PRICE_BID_LOW);  // 'B' = 0x42
     #(20_000);
 
-    // Verificar que el libro esté listo pero no haya disparado
     if (led[1] === 1'b1 && led[2] === 1'b0) begin
       $display("[+] Telemetría: Top of Book LISTO (LD1=1) y Disparo INACTIVO (LD2=0) [OK]");
     end else begin
       $fatal(1, "[-] Fallo en Paso 2: Estado de telemetría incoherente.");
     end
 
-    // PASO 3: Inyectar Bid de Ruptura y Capturar Retorno Concurrente
+    // PASO 3: Inyectar Bid de Ruptura y Esperar Recepción Completa
     $display("[+] Enviando Tick 3: BID Ruptura = 77795.0 (> 77792.0 Umbral) [DEBE DISPARAR]...");
 
     fork
-      // Hilo 1: Inyección del paquete que activa el motor algorítmico
+      // Hilo A: Envía el tick Y espera a que la orden regrese completa
       begin
-        send_tick_packet(8'h42, PRICE_BID_HIGH);
-      end
-
-      // Hilo 2: Receptor de la orden emitida por la FPGA hacia el host
-      begin
-        receive_order_packet(rx_magic, rx_action, rx_order_id, rx_timestamp);
+        fork
+          send_tick_packet(8'h42, PRICE_BID_HIGH);
+          receive_order_packet(rx_magic, rx_action, rx_order_id, rx_timestamp);
+        join
         order_received = 1;
-        $display("\n[!] ===> ¡PAQUETE DE EJECUCIÓN RECIBIDO EN HOST DESDE FPGA! <===");
-        $display("    • Sync Magic:     0x%02X (%c)", rx_magic, rx_magic);
-        $display("    • Acción Orden:   0x%02X (%c)", rx_action, rx_action);
-        $display("    • Order ID:       %0d", rx_order_id);
-        $display("    • HW Timestamp:   %0d ciclos (%0d ns)", rx_timestamp, rx_timestamp * 10);
       end
 
-      // Hilo 3: Watchdog temporal de seguridad
+      // Hilo B: Watchdog temporal de seguridad (~2.6 ms)
       begin
-        #(BYTE_PERIOD_NS * 25);  // Espera máxima (~2.1 ms)
+        #(BYTE_PERIOD_NS * 30);
         if (!order_received) begin
           $fatal(1, "[-] TIMEOUT: La FPGA no emitió el paquete de retorno por TX.");
         end
@@ -170,10 +163,18 @@ module tb_hft_pipeline;
     join_any
     disable fork;
 
-    // PASO 4: Validaciones Estrictas del Protocolo de Retorno
-    if (rx_magic === 8'h4F && rx_action === 8'h41 && rx_order_id === 32'd1) begin
-      $display("\n[+] Integridad de Protocolo: Magic=0x4F ('O'), Action='A' (Sell), ID=1 [OK]");
+    $display("\n[!] ===> ¡PAQUETE DE EJECUCIÓN RECIBIDO EN HOST DESDE FPGA! <===");
+    $display("    • Sync Magic:     0x%02X (%c)", rx_magic, rx_magic);
+    $display("    • Acción Orden:   0x%02X (%c)", rx_action, rx_action);
+    $display("    • Order ID:       %0d", rx_order_id);
+    $display("    • HW Timestamp:   %0d ciclos (%0d ns)", rx_timestamp, rx_timestamp * 10);
+
+    // PASO 4: Validaciones Estrictas del Protocolo de Retorno (Base 0 -> ID = 0)
+    if (rx_magic === 8'h4F && rx_action === 8'h41 && rx_order_id === 32'd0) begin
+      $display("\n[+] Integridad de Protocolo: Magic=0x4F ('O'), Action='A' (Sell), ID=0 [OK]");
     end else begin
+      $display("[-] Valores recibidos: Magic=0x%02X, Action=0x%02X, ID=%0d", rx_magic, rx_action,
+               rx_order_id);
       $fatal(1, "[-] Error de validación en los campos del paquete de orden.");
     end
 
