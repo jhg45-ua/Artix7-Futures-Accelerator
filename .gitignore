@@ -26,6 +26,7 @@ hardware/workspace/*
 *.wdb
 *.wcfg
 .Xil/
+hd_visual/
 
 # ========================================
 # SISTEMA OPERATIVO Y ENTORNOS (IDEs)

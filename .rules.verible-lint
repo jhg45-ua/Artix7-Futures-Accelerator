@@ -1,0 +1,6 @@
+# Desactiva advertencias cosméticas molestas
+-line-length
+-module-filename
+-parameter-name-style
++explicit-parameter-storage-type
++always-ff-non-blocking
